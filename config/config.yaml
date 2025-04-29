@@ -1,0 +1,21 @@
+dataset:
+  root_dir: "data/ucf_crime_videos"       # Folder containing subfolders for each video (with frames)
+  label_file: "data/labels.json"          # JSON file with video: label (0 or 1)
+  sequence_length: 16                     # Number of frames to sample per video
+  image_size: 224                         # Frame resize dimension
+  batch_size: 4                           # Batch size for training
+  num_workers: 1                          # Number of workers for DataLoader
+
+training:
+  num_epochs: 20
+  learning_rate: 0.0001
+  weight_decay: 0.0005
+  use_amp: false                          # Enable automatic mixed precision if needed
+
+model:
+  cnn_type: "efficientnet_b0"            # For clarity when you swap it later
+  hidden_dim: 1280
+  num_layers: 1
+  dropout: 0.3
+  bidirectional: true
+  pretrained: true
