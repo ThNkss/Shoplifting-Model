@@ -9,7 +9,7 @@ class LSTMModule(nn.Module):
             input_dim,
             hidden_dim,
             num_layers=num_layers,
-            dropout=dropout,
+            #dropout=dropout,
             batch_first=True,
             bidirectional=bidirectional
         )

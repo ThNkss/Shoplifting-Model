@@ -10,13 +10,11 @@ from torchvision import transforms
 from dataset.ucf_dataset import UCFCrimeDataset
 from models.lstm_module import LSTMModule
 from models.model import VideoClassifier
-from torch.utils.data import random_split
 import yaml
 
 # Load config.yaml
 with open("config/config.yaml", "r") as f:
     config = yaml.safe_load(f)
-
 
 # Hyperparameters
 batch_size = config['dataset']['batch_size']
@@ -39,7 +37,8 @@ pretrained = config['model']['pretrained']
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 if torch.cuda.is_available():
     print("Using " + torch.cuda.get_device_name(0))
-
+else:
+    print("using cpu")
 
 # Transformations
 transform = transforms.Compose([
@@ -50,25 +49,25 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 ])
 
-# Load full dataset
+# Load labels
 with open("data/labels.json", "r") as f:
     label_dict = json.load(f)
 
-full_dataset = UCFCrimeDataset(
-    root_dir=config['dataset']['root_dir'],
-    label_dict=json.load(open(config['dataset']['label_file'], 'r')),
+
+# Load training and validation datasets
+train_dataset = UCFCrimeDataset(
+    root_dir=config['dataset']['train_root_dir'],
+    label_dict=label_dict,
     sequence_length=sequence_length,
     transform=transform
 )
 
-# Calculate split sizes
-val_split = 0.2  # 20% for validation
-train_size = int((1 - val_split) * len(full_dataset))
-val_size = len(full_dataset) - train_size
-
-
-# Split datasets
-train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
+val_dataset = UCFCrimeDataset(
+    root_dir=config['dataset']['val_root_dir'],
+    label_dict=label_dict,
+    sequence_length=sequence_length,
+    transform=transform
+)
 
 train_loader = DataLoader(
     train_dataset,
@@ -88,9 +87,10 @@ val_loader = DataLoader(
     pin_memory=True
 )
 
+print(f"Train size: {len(train_dataset)}, Val size: {len(val_dataset)}")
+
 # Model initialization
 if cnn_type == "efficientnet_b0":
-    from efficientnet_pytorch import EfficientNet
     cnn = EfficientNet.from_pretrained('efficientnet-b0') if pretrained else EfficientNet.from_name('efficientnet-b0')
     cnn._fc = nn.Identity()
 else:
@@ -118,9 +118,30 @@ optimizer = optim.AdamW(
 
 criterion = torch.nn.BCEWithLogitsLoss()
 
-if __name__ == '__main__':
+# === CHECKPOINT PATH AND RESUME SETUP ===
+checkpoint_dir = 'checkpoints'
+checkpoint_path = os.path.join(checkpoint_dir, 'latest_checkpoint.pth')
+epoch_data_dir = 'epoch_data'  # Directory to save epoch data
+os.makedirs(checkpoint_dir, exist_ok=True)
+os.makedirs(epoch_data_dir, exist_ok=True)
+
+# Resume from checkpoint if exists
+start_epoch = 1
+if os.path.exists(checkpoint_path):
+    print("Resuming from checkpoint...")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1  # Continue from next epoch
+    print(f"Resumed from epoch {start_epoch}")
+
 # Training loop
-    for epoch in range(num_epochs):
+if __name__ == '__main__':
+    print(f"Training for {num_epochs} epochs...")
+
+    for epoch in range(start_epoch, num_epochs + 1):
+        print(f"Starting epoch [{epoch}/{num_epochs}]")
+
         # ----------------- TRAINING -----------------
         model.train()
         train_loss = 0
@@ -133,15 +154,14 @@ if __name__ == '__main__':
             lengths = lengths.to(device)
 
             optimizer.zero_grad()
-            outputs = model(sequences, lengths)
-
-            loss = criterion(outputs.view(-1), labels)
+            classification, _ = model(sequences, lengths)
+            loss = criterion(classification.view(-1), labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
             train_loss += loss.item()
-            preds = torch.sigmoid(outputs) > 0.5
+            preds = torch.sigmoid(classification) > 0.5
             train_correct += (preds.squeeze() == labels).sum().item()
             train_total += labels.size(0)
 
@@ -160,11 +180,11 @@ if __name__ == '__main__':
                 labels = labels.float().to(device)
                 lengths = lengths.to(device)
 
-                outputs = model(sequences, lengths)
-                loss = criterion(outputs.view(-1), labels)
+                classification, _ = model(sequences, lengths)
+                loss = criterion(classification.view(-1), labels)
 
                 val_loss += loss.item()
-                preds = torch.sigmoid(outputs) > 0.5
+                preds = torch.sigmoid(classification) > 0.5
                 val_correct += (preds.squeeze() == labels).sum().item()
                 val_total += labels.size(0)
 
@@ -172,19 +192,24 @@ if __name__ == '__main__':
         val_loss = val_loss / len(val_loader)
 
         # ----------------- PRINT RESULTS -----------------
-        print(f"Epoch [{epoch+1}/{num_epochs}]")
+        print(f"Epoch [{epoch}/{num_epochs}]")
         print(f"Train Loss: {train_loss:.4f}, Train Acc: {train_accuracy:.4f}")
         print(f"Val Loss: {val_loss:.4f}, Val Acc: {val_accuracy:.4f}")
+
+        # ----------------- SAVE EPOCH DATA -----------------
+        epoch_data = {
+            'train_loss': train_loss,
+            'train_accuracy': train_accuracy,
+            'val_loss': val_loss,
+            'val_accuracy': val_accuracy
+        }
+        torch.save(epoch_data, os.path.join(epoch_data_dir, f'epoch_{epoch}.pth'))
 
         # ----------------- SAVE CHECKPOINT -----------------
         torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'train_loss': train_loss,
-            'train_accuracy': train_accuracy,
-            'val_loss': val_loss,
-            'val_accuracy': val_accuracy,
-        }, f'checkpoints/epoch_{epoch+1}.pth')
+        }, checkpoint_path)
 
-print("Training completed!")
+    print("Training completed!")

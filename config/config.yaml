@@ -1,10 +1,11 @@
 dataset:
-  root_dir: "data/ucf_crime_videos"       # Folder containing subfolders for each video (with frames)
+  train_root_dir: "data/train_dataset"  # Folder containing videos
+  val_root_dir: "data/val_dataset"  
   label_file: "data/labels.json"          # JSON file with video: label (0 or 1)
-  sequence_length: 16                     # Number of frames to sample per video
+  sequence_length: 1                     # Number of frames to sample per video
   image_size: 224                         # Frame resize dimension
-  batch_size: 4                           # Batch size for training
-  num_workers: 1                          # Number of workers for DataLoader
+  batch_size: 1                           # Batch size for training
+  num_workers: 0                          # Number of workers for DataLoader
 
 training:
   num_epochs: 20
